@@ -81,6 +81,31 @@ def initAndGetPreferences():
     return prefs
 
 
+def mergeIntoMesh(obj, mesh, millimeters, angl):
+    # Don't spam console with missing attribute errors for "Shape"
+    if not hasattr(obj, "Shape"):
+        return mesh
+
+    try:
+        shape = obj.Shape.copy(False)
+        shape.Placement = obj.getGlobalPlacement()
+        # See Mesh Design workbench => Tesselate shape => Standard
+        # LinearDeflection is "Surface deviation"
+        # AngularDeflection is "Angular deviation" but in radians (i.e. 3.14159 is 180°)
+        mesh2 = MeshPart.meshFromShape(Shape=shape,
+                                       LinearDeflection=millimeters,
+                                       AngularDeflection=angl,
+                                       Relative=False)
+        # Despite what https://wiki.freecad.org/Mesh_Scripting says (as of 2023-07-20),
+        # mesh.unite(mesh2) does NOT modify mesh. It returns a new object with the union
+        # and leaves the original object unchanged.
+        mesh = mesh.unite(mesh2)
+    except:
+        FreeCAD.Console.PrintWarning("Cannot export {}: {}\n".format(obj.Name, sys.exc_info()[1]))
+
+    return mesh
+
+
 def exportVisible():
     prefs = initAndGetPreferences()
 
@@ -102,7 +127,6 @@ def exportVisible():
 
         stlFpath = os.path.join(output_dir, stlFname)
 
-        # TODO: These should be configurable parameters
         millimeters = prefs['linDef']
         angl = prefs['angDef'] * math.pi / 180
 
@@ -119,25 +143,7 @@ def exportVisible():
             except:
                 FreeCAD.Console.PrintLog("     ???")
 
-            # Don't spam console with missing attribute errors for "Shape"
-            if not hasattr(obj, "Shape"):
-                continue
-
-            try:
-                shape = obj.Shape.copy(False)
-                shape.Placement = obj.getGlobalPlacement()
-                # See Mesh Design workbench => Tesselate shape => Standard
-                # LinearDeflection is "Surface deviation"
-                # AngularDeflection is "Angular deviation" but in radians (i.e. 3.14159 is 180°)
-                mesh2 = MeshPart.meshFromShape(Shape=shape,
-                                               LinearDeflection=millimeters,
-                                               AngularDeflection=angl,
-                                               Relative=False)
-                mesh = mesh.unite(mesh2)
-            except:
-                FreeCAD.Console.PrintWarning("Cannot export {}: {}\n".format(
-                    obj.Name,
-                    sys.exc_info()[1]))
+            mesh = mergeIntoMesh(obj, mesh, millimeters, angl)
 
         mesh.write(Filename=stlFpath)
 
