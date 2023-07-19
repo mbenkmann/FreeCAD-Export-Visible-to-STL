@@ -4,7 +4,7 @@ __Version__ = "0.1"
 __Date__ = "2023-07-18"
 __Comment__ = "Exports all visible objects to a <documentname>.stl"
 __Wiki__ = ""
-__Help__ = "Converts all visible objects to a mesh and exports it as <documentname>.stl ('unnamed.stl' the document has not been saved, yet). Export path and mesh quality can be set in Tools/Edit Preferences.../BaseApp/Preferences/ExportSTL."
+__Help__ = "Converts all visible objects to a mesh and exports it as <documentname>.stl ('unnamed.stl' if the document has not been saved, yet). Export path and mesh quality can be set in Tools/Edit Preferences.../BaseApp/Preferences/ExportSTL. You can also set a command that will be executed after the export. If it contains the word 'STLFILE' that will be replaced with the exported path. Otherwise the path will be appended as last argument."
 __Status__ = "experimental"
 __Requires__ = "freecad 0.19.0"
 __Communication__ = ""
@@ -14,8 +14,8 @@ __Communication__ = ""
 # realthunder (copy_obj.py from https://forum.freecad.org/viewtopic.php?t=45406)
 
 from PySide import QtCore, QtGui
-import FreeCAD, Mesh, MeshPart
-import os, sys, math
+import FreeCAD, Mesh, MeshPart, Part
+import os, sys, math, subprocess
 
 
 def showErrorMessage(err):
@@ -37,7 +37,7 @@ def getVisibleObjects():
     for obj in FreeCAD.ActiveDocument.Objects:
         if obj.TypeId != "App::Part" and obj.TypeId != "PartDesign::Body":
             if obj.ViewObject.isVisible() and not hasInvisibleParent(
-                    obj, ("App::Part", "PartDesign::Body")):
+                    obj, ("App::Part", "PartDesign::Body", "App::Origin")):
                 visibleObjs.append(obj)
 
     return visibleObjs
@@ -62,23 +62,73 @@ def hasInvisibleParent(o, ptypes):
 #   stlPath
 #   linDef
 #   angDef
+#   command
 def initAndGetPreferences():
     prefs = {}
     preferences = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/STLExport")
+
     stlPath = preferences.GetString('AlwaysExportIntoThisDirectory').strip()
-    preferences.SetString('AlwaysExportIntoThisDirectory', stlPath)
     prefs['stlPath'] = stlPath
+
+    command = preferences.GetString('CommandAfterExport').strip()
+    prefs['command'] = command
+
     linDef = preferences.GetFloat('LinearDeflectionMillimeters')
+    prefs['linDef'] = linDef
     if linDef <= .000001:
         linDef = .1
-    preferences.SetFloat('LinearDeflectionMillimeters', linDef)
-    prefs['linDef'] = linDef
+        preferences.SetFloat('LinearDeflectionMillimeters', linDef)
+        # The first time the macro is executed, linDef will be 0 and we come here.
+        # Write back the string parameters we read (likely both '') to make sure they
+        # are visible in the Preferences list.
+        preferences.SetString('AlwaysExportIntoThisDirectory', stlPath)
+        preferences.SetString('CommandAfterExport', command)
+
     angDef = preferences.GetFloat('AngularDeflectionDegrees')
+    prefs['angDef'] = angDef
     if angDef <= .01:
         angDef = 3
-    preferences.SetFloat('AngularDeflectionDegrees', angDef)
-    prefs['angDef'] = angDef
+        preferences.SetFloat('AngularDeflectionDegrees', angDef)
+
     return prefs
+
+
+def copyShapeNew(obj):
+    # getSubObject(subname, retType=0, matrix=None, transform=True, depth=0)
+    #
+    # * subname(string|list|tuple): dot separated string or sequence of strings
+    #   referencing subobject. Empty string '' refers to the object itself.
+    #
+    # * retType: return type, 0=PyObject, 1=DocObject, 2=DocAndPyObject, 3=Placement
+    #
+    #     PyObject: return a python binding object for the (sub)object referenced in
+    #     each 'subname' The actual type of 'PyObject' is implementation dependent.
+    #     For Part::Feature compatible objects, this will be of type TopoShapePy and
+    #     pre-transformed by accumulated transformation matrix along the object path.
+    #
+    #     DocObject:  return the document object referenced in subname, if 'matrix' is
+    #     None. Or, return a tuple (object, matrix) for each 'subname' and 'matrix' is
+    #     the accumulated transformation matrix for the sub object.
+    #
+    #     DocAndPyObject: return a tuple (object, matrix, pyobj) for each subname
+    #
+    #     Placement: return a transformed placement of the sub-object
+    #
+    # * matrix: the initial transformation to be applied to the sub object.
+    #
+    # * transform: whether to transform the sub object using this object's placement
+    #
+    # * depth: current recursive depth
+    obj, matrix = obj.getSubObject('', 1, FreeCAD.Matrix(), True)
+    shape = Part.getShape(obj, transform=False)
+    shape.transformShape(matrix, False, True)
+    return shape
+
+
+def copyShape(obj):
+    shape = obj.Shape.copy(False)
+    shape.Placement = obj.getGlobalPlacement()
+    return shape
 
 
 def mergeIntoMesh(obj, mesh, millimeters, angl):
@@ -87,8 +137,8 @@ def mergeIntoMesh(obj, mesh, millimeters, angl):
         return mesh
 
     try:
-        shape = obj.Shape.copy(False)
-        shape.Placement = obj.getGlobalPlacement()
+        shape = copyShapeNew(obj)
+
         # See Mesh Design workbench => Tesselate shape => Standard
         # LinearDeflection is "Surface deviation"
         # AngularDeflection is "Angular deviation" but in radians (i.e. 3.14159 is 180°)
@@ -146,6 +196,14 @@ def exportVisible():
             mesh = mergeIntoMesh(obj, mesh, millimeters, angl)
 
         mesh.write(Filename=stlFpath)
+
+        cmd = prefs['command']
+        if cmd:
+            if 'STLFILE' in cmd:
+                cmd = cmd.replace('STLFILE', stlFpath)
+            else:
+                cmd = cmd + " " + stlFpath
+            subprocess.Popen(cmd, shell=True)
 
         showInfoMessage("STL exported to: {}\n\n".format(stlFpath))
 
