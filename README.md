@@ -4,6 +4,8 @@ Tesselates all visible objects, combines them into a single mesh and exports it 
 is the name of the source document, or `"unnamed.stl"` if the document has not been saved, yet. After the export the macro
 can optionally run an external program, e.g. a slicer for 3D printing.
 
+This macro supports `App::Link` objects, including those that link to external documents.
+
 This macro does *NOT* modify the source document in any way, not even temporarily. The tesselation parameters for
 deviation in particular are *NOT* temporarily written into the objects' `View`, unlike another STL export macro I've seen.
 
